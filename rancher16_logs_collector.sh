@@ -1,7 +1,28 @@
 #!/bin/bash
+#Check if we're running as root.
+if [[ $EUID -ne 0 ]]; then
+  echo "This script must be run as root"
+  exit 1
+fi
 
 # Create temp directory
 TMPDIR=$(mktemp -d)
+
+#Set TIMEOUT in seconds for select commands
+TIMEOUT=60
+
+function timeout_start_msg() {
+  TIMEOUT_CMD=$1
+  TIMEOUT_EXCEEDED_MSG="$TIMEOUT_CMD command timed out, killing process to prevent hanging."
+  echo "Executing $TIMEOUT_CMD with a timeout of $TIMEOUT seconds."
+}
+function timeout_done_msg() {
+  echo "Execution of $TIMEOUT_CMD has finished."
+  echo
+}
+function timeout_cmd() {
+  WPID=$!; sleep $TIMEOUT && if kill -0 $WPID > /dev/null 2>&1; then echo $TIMEOUT_EXCEEDED_MSG; kill $WPID &> /dev/null; fi & KPID=$!; wait $WPID
+}
 
 # System info
 mkdir -p $TMPDIR/systeminfo
@@ -20,7 +41,11 @@ fi
 lsmod > $TMPDIR/systeminfo/lsmod 2>&1
 mount > $TMPDIR/systeminfo/mount 2>&1
 ps aux > $TMPDIR/systeminfo/psaux 2>&1
-lsof -Pn > $TMPDIR/systeminfo/lsof 2>&1
+
+timeout_start_msg "lsof"
+lsof -Pn >$TMPDIR/systeminfo/lsof 2>&1 & timeout_cmd
+timeout_done_msg
+
 if $(command -v sysctl >/dev/null 2>&1); then
   sysctl -a > $TMPDIR/systeminfo/sysctla 2>/dev/null
 fi
@@ -42,9 +67,18 @@ fi
 
 # Docker
 mkdir -p $TMPDIR/docker
-docker info > $TMPDIR/docker/dockerinfo 2>&1
-docker ps -a > $TMPDIR/docker/dockerpsa 2>&1
-docker stats -a --no-stream > $TMPDIR/docker/dockerstats 2>&1
+timeout_start_msg "docker info"
+docker info >$TMPDIR/docker/dockerinfo 2>&1 & timeout_cmd
+timeout_done_msg
+
+timeout_start_msg "docker ps -a"
+docker ps -a >$TMPDIR/docker/dockerpsa 2>&1
+timeout_done_msg
+
+timeout_start_msg "docker stats"
+docker stats -a --no-stream >$TMPDIR/docker/dockerstats 2>&1 & timeout_cmd
+timeout_done_msg
+
 if [ -f /etc/docker/daemon.json ]; then
   cat /etc/docker/daemon.json > $TMPDIR/docker/etcdockerdaemon.json
 fi
